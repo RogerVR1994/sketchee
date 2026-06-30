@@ -142,7 +142,7 @@
   .hint{ position:fixed; left:50%; bottom:14px; transform:translateX(-50%); font-size:11px; color:var(--text-dim);
     background: var(--bg-panel); border:1px solid var(--stroke); border-radius:20px; padding:6px 14px; z-index:9; }
 
-  #uiToggle{ display:none; }   /* mobile-only "hide menus" button */
+  #uiDock{ display:none; }   /* mobile-only per-panel show/hide dock */
   @media (max-width: 760px){
     /* Compact top bar: drop the title block, keep readouts + toggles, never overflow */
     #topbar{ gap:10px; padding:7px 12px; max-width:calc(100vw - 16px); flex-wrap:wrap; justify-content:center; }
@@ -159,29 +159,35 @@
     .field{ margin-bottom:11px; }
 
     /* Flyer list: compact, top-right, scrolls (kept available on mobile) */
-    #flyers{ display:flex; top:64px; right:8px; left:auto; width:188px; padding:12px; max-height:38vh; }
+    #flyers{ display:flex; top:104px; right:8px; left:auto; width:188px; padding:12px; max-height:36vh; }
 
     /* Fine Pose editor: on-screen and width-fitted (still draggable) */
     #posePanel{ left:8px; right:auto; top:64px; width:calc(100vw - 16px); max-width:340px; max-height:calc(100vh - 210px); }
 
-    /* One tap to declutter: hide every overlay, leaving just the 3D scene */
-    #uiToggle{
-      display:flex; align-items:center; justify-content:center; padding:0;
-      position:fixed; top:10px; left:10px; width:42px; height:42px; z-index:60;
-      font-size:17px; border-radius:50%;
-      background:var(--bg-panel); border:1px solid var(--stroke); color:var(--text);
-      backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); box-shadow:0 6px 18px rgba(0,0,0,.35);
+    /* Per-panel show/hide dock on the free left edge (below the top bar) */
+    #uiDock{
+      display:flex; flex-direction:column; gap:6px;
+      position:fixed; left:8px; top:108px; z-index:60;
     }
-    body.ui-hidden #topbar,
-    body.ui-hidden #controls,
-    body.ui-hidden #flyers,
-    body.ui-hidden #posePanel{ display:none !important; }
+    #uiDock button{
+      min-width:64px; padding:6px 9px; font-size:11px; font-weight:600; border-radius:9px;
+      background:var(--bg-panel); border:1px solid var(--stroke); color:var(--text-dim);
+      backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); box-shadow:0 4px 14px rgba(0,0,0,.3);
+    }
+    #uiDock button.on{ color:#fff; border-color:var(--accent); background:rgba(62,200,216,0.16); }
+    body.hide-topbar   #topbar  { display:none !important; }
+    body.hide-flyers   #flyers  { display:none !important; }
+    body.hide-controls #controls{ display:none !important; }
   }
 </style>
 </head>
 <body>
   <div id="scene"></div>
-  <button id="uiToggle" aria-label="Show or hide menus" title="Show / hide menus">✕</button>
+  <div id="uiDock" aria-label="Show or hide panels">
+    <button data-panel="topbar" class="on" title="Top bar">Top</button>
+    <button data-panel="flyers" class="on" title="Flyers panel">Flyers</button>
+    <button data-panel="controls" class="on" title="Pitch / roll controls">Attitude</button>
+  </div>
 
   <!-- Top overlay -->
   <div id="topbar" class="panel">
@@ -193,6 +199,7 @@
     <button id="particleToggle" class="toggle">Wind&nbsp;○</button>
     <button id="poseToggle" class="toggle">Pose&nbsp;✎</button>
     <button id="zoneToggle" class="toggle on">Zone&nbsp;▦</button>
+    <button id="lockToggle" class="toggle">Lock&nbsp;🔒</button>
   </div>
 
   <!-- Compass -->
@@ -340,6 +347,23 @@
     const _spineQ = new THREE.Quaternion();
     const _spineE = new THREE.Euler();
     const _ZPLUS = new THREE.Vector3(0, 0, 1);
+    const _planeX = new THREE.Vector3();
+    const _planeY = new THREE.Vector3();
+    const _slotD = new THREE.Vector3();
+    let lockSlot = false;   // when on, non-leader flyers stay pinned to their point on the plane
+
+    // Record each non-leader flyer's fixed 2D spot (u,v) on the current plane
+    function captureLockSlots(){
+      if (!leaderFlyer) return;
+      _planeX.set(1, 0, 0).applyQuaternion(zonePlane.quaternion);
+      _planeY.set(0, 1, 0).applyQuaternion(zonePlane.quaternion);
+      flyers.forEach(f => {
+        if (f === leaderFlyer) return;
+        _slotD.copy(f.slot).sub(leaderFlyer.slot);
+        f.lockU = _slotD.dot(_planeX);
+        f.lockV = _slotD.dot(_planeY);
+      });
+    }
 
     // ---------------------------------------------------------------------
     // Controls: real OrbitControls if present, else a compact fallback
@@ -544,6 +568,7 @@
         type: 'angle',
         custom: false,                       // true once the Fine Pose window overrides the preset
         slot: new THREE.Vector3(),
+        lockU: 0, lockV: 0,                  // fixed 2D spot on the safe-zone plane (when slot-locked)
         phase: Math.random() * Math.PI * 2,
         smoothQuat: new THREE.Quaternion().copy(pose.quaternion),
         targetQuat: new THREE.Quaternion(),
@@ -703,6 +728,7 @@
       refreshTargets(f);                   // attitude/arrow/fall-rate (leaves copied joints when custom)
       recolorAll();
       rebuildList();
+      if (lockSlot) captureLockSlots();    // give the newcomer a spot on the plane
     }
 
     function removeFlyer(i){
@@ -816,11 +842,19 @@
       zoneToggle.classList.toggle('on', zonePlane.visible);
     });
 
-    // Mobile declutter: hide/show all overlays (button itself stays visible)
-    const uiToggle = document.getElementById('uiToggle');
-    uiToggle.addEventListener('click', () => {
-      const hidden = document.body.classList.toggle('ui-hidden');
-      uiToggle.textContent = hidden ? '☰' : '✕';   // ☰ = tap to show menus, ✕ = tap to hide
+    const lockToggle = document.getElementById('lockToggle');
+    lockToggle.addEventListener('click', () => {
+      lockSlot = !lockSlot;
+      lockToggle.classList.toggle('on', lockSlot);
+      if (lockSlot) captureLockSlots();   // remember each flyer's current spot on the plane
+    });
+
+    // Mobile declutter: each dock button shows/hides one panel independently
+    document.querySelectorAll('#uiDock button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const hidden = document.body.classList.toggle('hide-' + btn.dataset.panel);
+        btn.classList.toggle('on', !hidden);
+      });
     });
 
     const listEl = document.getElementById('flyerList');
@@ -1205,8 +1239,9 @@
         selRing.visible = false;
       }
 
-      // park the safe/danger plane at the TIP (crown) of the leader's head, tilted ⟂ to his chest
-      if (zonePlane.visible && (leaderFlyer || flyers.length)){
+      // Position/orient the safe-zone plane every frame (used by the visual AND the slot-lock):
+      // at the TIP (crown) of the leader's head, tilted perpendicular to his chest.
+      if (leaderFlyer || flyers.length){
         const lead = leaderFlyer || flyers[0];
         lead.joints.head.updateWorldMatrix(true, false);
         zonePlane.position.copy(lead.joints.head.localToWorld(_tip.set(0, 0.5, 0)));  // 0.5 ≈ base-of-skull→crown
@@ -1214,6 +1249,17 @@
         _spineE.set(lead.jCur.spine.x, lead.jCur.spine.y, lead.jCur.spine.z);
         _zoneNormal.set(0, 1, 0).applyQuaternion(_spineQ.setFromEuler(_spineE)).applyQuaternion(lead.smoothQuat).normalize();
         zonePlane.quaternion.setFromUnitVectors(_ZPLUS, _zoneNormal);
+
+        // Slot-lock: keep each other flyer's head pinned to its (u,v) point as the plane tilts
+        if (lockSlot){
+          _planeX.set(1, 0, 0).applyQuaternion(zonePlane.quaternion);
+          _planeY.set(0, 1, 0).applyQuaternion(zonePlane.quaternion);
+          flyers.forEach(f => {
+            if (f === lead) return;
+            f.slot.copy(lead.slot).addScaledVector(_planeX, f.lockU).addScaledVector(_planeY, f.lockV);
+            f.root.position.copy(f.slot);   // snap (plane tilt is already smoothed via smoothQuat)
+          });
+        }
       }
 
       if (particles.visible) updateParticles(dt);
