@@ -27,7 +27,7 @@
     position:fixed; inset:0;
     background: linear-gradient(180deg, #0c1830 0%, #214b78 55%, #4a86ba 100%);
   }
-  canvas{ display:block; }
+  canvas{ display:block; touch-action:none; }   /* let OrbitControls own touch gestures */
 
   .panel{
     position:fixed;
@@ -99,13 +99,16 @@
   #flyers .head .count{ font-size:11px; color:var(--text-dim); }
   #flyerList{ overflow-y:auto; margin:0 -4px; padding:0 4px; }
   .flyer-row{
-    display:flex; align-items:center; gap:9px; padding:8px; margin-bottom:8px; cursor:pointer;
+    display:flex; flex-direction:column; gap:7px; padding:9px; margin-bottom:8px; cursor:pointer;
     background: var(--bg-panel-2); border:1px solid var(--stroke); border-radius:10px;
   }
   .flyer-row.selected{ border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 4px 14px rgba(62,200,216,.18); }
-  .swatch{ width:16px; height:16px; border-radius:5px; flex:0 0 auto; box-shadow: inset 0 0 0 1px rgba(255,255,255,.25); }
-  .flyer-row .name{ font-size:13px; font-weight:700; width:26px; }
-  .flyer-row .meta{ font-size:10px; color:var(--text-dim); margin-left:auto; text-align:right; line-height:1.25; white-space:nowrap; }
+  .fr-top{ display:flex; align-items:center; gap:8px; }
+  .fr-bot{ display:flex; align-items:center; gap:8px; }
+  .swatch{ width:15px; height:15px; border-radius:5px; flex:0 0 auto; box-shadow: inset 0 0 0 1px rgba(255,255,255,.25); }
+  .flyer-row .name{ font-size:13px; font-weight:700; flex:1 1 auto; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .fr-bot select{ flex:1 1 auto; min-width:0; }
+  .flyer-row .meta{ font-size:10px; color:var(--text-dim); margin-left:auto; white-space:nowrap; }
   select{
     font-family:inherit; font-size:12px; font-weight:600; color:var(--text);
     background: rgba(10,16,28,.6); border:1px solid var(--stroke); border-radius:8px;
@@ -139,8 +142,25 @@
   .hint{ position:fixed; left:50%; bottom:14px; transform:translateX(-50%); font-size:11px; color:var(--text-dim);
     background: var(--bg-panel); border:1px solid var(--stroke); border-radius:20px; padding:6px 14px; z-index:9; }
   @media (max-width: 760px){
-    #controls{ width: calc(100vw - 28px); }
-    #flyers{ display:none; }
+    /* Compact top bar: drop the title block, keep readouts + toggles, never overflow */
+    #topbar{ gap:10px; padding:7px 12px; max-width:calc(100vw - 16px); flex-wrap:wrap; justify-content:center; }
+    #topbar .title, #topbar .sep{ display:none; }
+    #topbar .stat{ min-width:52px; }
+    #topbar .stat .v{ font-size:17px; }
+
+    /* Declutter overlays that don't suit a small touch screen */
+    #compass{ display:none; }
+    .hint{ display:none; }
+
+    /* Pitch/roll + presets: full-width bottom sheet */
+    #controls{ left:8px; right:8px; bottom:8px; width:auto; padding:13px; }
+    .field{ margin-bottom:11px; }
+
+    /* Flyer list: compact, top-right, scrolls (kept available on mobile) */
+    #flyers{ display:flex; top:64px; right:8px; left:auto; width:188px; padding:12px; max-height:38vh; }
+
+    /* Fine Pose editor: on-screen and width-fitted (still draggable) */
+    #posePanel{ left:8px; right:auto; top:64px; width:calc(100vw - 16px); max-width:340px; max-height:calc(100vh - 210px); }
   }
 </style>
 </head>
@@ -466,11 +486,11 @@
 
       // Floating label (always faces camera)
       const labelCanvas = document.createElement('canvas');
-      labelCanvas.width = 256; labelCanvas.height = 128;
+      labelCanvas.width = 320; labelCanvas.height = 80;   // 4:1, room for full names
       const labelTex = new THREE.CanvasTexture(labelCanvas);
       const labelMat = new THREE.SpriteMaterial({ map: labelTex, transparent:true, depthTest:false });
       const label = new THREE.Sprite(labelMat);
-      label.scale.set(1.5, 0.75, 1);
+      label.scale.set(2.2, 0.55, 1);
       label.position.set(0, 2.0, 0);
       label.renderOrder = 999;
       root.add(label);
@@ -577,23 +597,28 @@
 
     function drawLabel(f, text, colorHex){
       const c = f.labelCanvas, ctx = c.getContext('2d');
-      ctx.clearRect(0,0,c.width,c.height);
-      ctx.font = 'bold 74px -apple-system, Segoe UI, Roboto, sans-serif';
+      ctx.clearRect(0, 0, c.width, c.height);
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.lineWidth = 9; ctx.strokeStyle = 'rgba(8,14,24,0.92)';
+      let size = 56;                                  // shrink to fit the canvas width
+      ctx.font = 'bold ' + size + 'px -apple-system, Segoe UI, Roboto, sans-serif';
+      while (ctx.measureText(text).width > c.width - 22 && size > 18){
+        size -= 3;
+        ctx.font = 'bold ' + size + 'px -apple-system, Segoe UI, Roboto, sans-serif';
+      }
+      ctx.lineWidth = Math.max(4, size * 0.13); ctx.strokeStyle = 'rgba(8,14,24,0.92)';
       ctx.strokeText(text, c.width/2, c.height/2);
       ctx.fillStyle = colorHex;
       ctx.fillText(text, c.width/2, c.height/2);
       f.labelTex.needsUpdate = true;
     }
 
-    // Keep labels (F1..Fn) and palette colors aligned to index after add/remove
+    // Keep palette colors aligned to index after add/remove; labels use each flyer's name
     function recolorAll(){
       flyers.forEach((f, i) => {
         const hex = PALETTE[i % PALETTE.length];
         f.material.color.set(hex);
         f.arrow.setColor(new THREE.Color(0xbfe6ff)); // arrow stays airflow-blue
-        drawLabel(f, 'F' + (i+1), hex);
+        drawLabel(f, f.name, hex);
       });
       if (selected){ // keep selection highlight + ring color in sync after recolor
         selected.material.emissive.copy(selected.material.color).multiplyScalar(0.4);
@@ -610,24 +635,30 @@
       });
     }
 
-    function addFlyer(type, copyLeader = true){
+    // addFlyer({type,name,slot}) places an explicit flyer (boot/demo); addFlyer() with no
+    // type clones the leader (flyers[0]) — used by the "+ Add Flyer" button.
+    function addFlyer(opts){
+      opts = opts || {};
       if (flyers.length >= 8) return;
-      const leader = flyers[0];            // F1 is the leader; new jumpers clone its exact pose
+      const leader = flyers[0];
+      const clone = opts.type === undefined && !!leader;
       const f = makeFigure(PALETTE[flyers.length % PALETTE.length]);
-      if (copyLeader && leader){
+      if (clone){
         f.type = leader.type;
         f.custom = leader.custom;
         for (const k in leader.jTar) f.jTar[k] = { x:leader.jTar[k].x, y:leader.jTar[k].y, z:leader.jTar[k].z };
       } else {
-        f.type = type || 'angle';
+        f.type = opts.type || 'angle';
         f.custom = false;
         const jt = jointTargets(f.type);
         for (const k in jt) f.jTar[k] = { x:jt[k].x, y:jt[k].y, z:jt[k].z };
       }
-      f.placed = false;                    // false = part of auto-formation; true = pinned by user
+      f.name = opts.name || ('Flyer ' + (flyers.length + 1));
+      f.placed = !!opts.slot;              // explicit slot => pinned (reflow leaves it)
       f.root.userData.flyer = f;           // let raycasting map a hit mesh back to its flyer
       flyers.push(f);
-      reflow();
+      if (opts.slot) f.slot.set(opts.slot.x, opts.slot.y, opts.slot.z);
+      reflow();                            // positions only the un-pinned flyers
       f.root.position.copy(f.slot);
       // initialise jCur to match jTar so the flyer appears in its pose immediately
       for (const k in f.jTar) f.jCur[k] = { x:f.jTar[k].x, y:f.jTar[k].y, z:f.jTar[k].z };
@@ -725,7 +756,7 @@
       });
     });
 
-    document.getElementById('addFlyer').addEventListener('click', () => addFlyer()); // clones the leader (F1)
+    document.getElementById('addFlyer').addEventListener('click', () => addFlyer()); // clones the leader (first flyer)
 
     document.getElementById('resetLayout').addEventListener('click', () => {
       flyers.forEach(f => f.placed = false); // un-pin everyone and re-tidy the formation
@@ -753,14 +784,24 @@
         row.className = 'flyer-row';
         if (f === selected) row.classList.add('selected');
 
+        // top line: colour swatch + name + remove
+        const top = document.createElement('div'); top.className = 'fr-top';
         const sw = document.createElement('div');
         sw.className = 'swatch';
         sw.style.background = PALETTE[i % PALETTE.length];
-
         const name = document.createElement('div');
         name.className = 'name';
-        name.textContent = 'F' + (i+1);
+        name.textContent = f.name; name.title = f.name;
+        const x = document.createElement('button');
+        x.className = 'x-btn';
+        x.textContent = '✕';
+        x.title = 'Remove';
+        x.disabled = flyers.length <= 1;
+        x.addEventListener('click', (e) => { e.stopPropagation(); removeFlyer(i); });
+        top.append(sw, name, x);
 
+        // bottom line: position selector + fall rate
+        const bot = document.createElement('div'); bot.className = 'fr-bot';
         const sel = document.createElement('select');
         TYPES.forEach(([val, lbl]) => {
           const o = document.createElement('option');
@@ -769,22 +810,13 @@
           sel.appendChild(o);
         });
         sel.addEventListener('change', () => setFlyerType(i, sel.value));
-
-        const meta = document.createElement('div');
-        meta.className = 'meta';
         const fall = document.createElement('div');
+        fall.className = 'meta';
         fall.textContent = f.fallRate + ' mph';
         f._fallEl = fall;
-        meta.appendChild(fall);
+        bot.append(sel, fall);
 
-        const x = document.createElement('button');
-        x.className = 'x-btn';
-        x.textContent = '✕';
-        x.title = 'Remove';
-        x.disabled = flyers.length <= 1;
-        x.addEventListener('click', () => removeFlyer(i));
-
-        row.append(sw, name, sel, meta, x);
+        row.append(top, bot);
         row.addEventListener('click', (e) => {
           if (e.target.closest('select') || e.target.closest('button')) return;
           setSelected(f);
@@ -871,12 +903,15 @@
 
     function onFlyerPointerDown(e){
       if (e.button !== 0) return;                     // left button only
+      const isTouch = e.pointerType && e.pointerType !== 'mouse';
       setNDC(e);
       raycaster.setFromCamera(ndc, camera);
       const hits = raycaster.intersectObjects(flyers.map(f => f.root), true);
       const f = hits.length ? flyerFromObject(hits[0].object) : null;
-      if (f){
-        setSelected(f);
+      setSelected(f || null);                         // tap a flyer to select; empty space deselects
+      // Dragging a flyer in 3D is a mouse gesture. On touch, leave the camera
+      // controls active so one-finger orbit and two-finger pinch keep working.
+      if (f && !isTouch){
         dragging = true;
         controls.enabled = false;                     // suspend camera while moving a flyer
         dragStartClientY = e.clientY;
@@ -885,8 +920,6 @@
         if (raycaster.ray.intersectPlane(dragPlane, hitPt)) grab.copy(hitPt).sub(f.root.position);
         else grab.set(0,0,0);
         e.preventDefault();
-      } else {
-        setSelected(null);                            // empty space: deselect and let the camera orbit
       }
     }
 
@@ -1021,7 +1054,7 @@
       if (selected){
         ppEmpty.style.display = 'none';
         ppControls.style.display = '';
-        ppTarget.textContent = 'F' + (flyers.indexOf(selected) + 1);
+        ppTarget.textContent = selected.name;
         renderPosePanel();
       } else {
         ppEmpty.style.display = '';
@@ -1137,7 +1170,10 @@
     // Boot
     // ---------------------------------------------------------------------
     onAttitudeChange();   // sync readouts
-    addFlyer('angle', false);   // start with a single jumper (the leader); use "+ Add Flyer" for more
+    // Three default jumpers in a loose formation (Uncle YumYum sits low, out front).
+    addFlyer({ type:'angle', name:'F Ryan',       slot:{ x:-2.8, y: 0.3, z:-0.3 } }); // leader (red, left)
+    addFlyer({ type:'angle', name:'Gipsy',        slot:{ x: 0.6, y: 0.6, z: 0.6 } }); // gold, centre
+    addFlyer({ type:'angle', name:'Uncle YumYum', slot:{ x:-0.5, y:-1.9, z: 0.9 } }); // yellow, bottom
     animate();
   })();
   </script>
