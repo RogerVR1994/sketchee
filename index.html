@@ -141,6 +141,8 @@
 
   .hint{ position:fixed; left:50%; bottom:14px; transform:translateX(-50%); font-size:11px; color:var(--text-dim);
     background: var(--bg-panel); border:1px solid var(--stroke); border-radius:20px; padding:6px 14px; z-index:9; }
+
+  #uiToggle{ display:none; }   /* mobile-only "hide menus" button */
   @media (max-width: 760px){
     /* Compact top bar: drop the title block, keep readouts + toggles, never overflow */
     #topbar{ gap:10px; padding:7px 12px; max-width:calc(100vw - 16px); flex-wrap:wrap; justify-content:center; }
@@ -161,11 +163,25 @@
 
     /* Fine Pose editor: on-screen and width-fitted (still draggable) */
     #posePanel{ left:8px; right:auto; top:64px; width:calc(100vw - 16px); max-width:340px; max-height:calc(100vh - 210px); }
+
+    /* One tap to declutter: hide every overlay, leaving just the 3D scene */
+    #uiToggle{
+      display:flex; align-items:center; justify-content:center; padding:0;
+      position:fixed; top:10px; left:10px; width:42px; height:42px; z-index:60;
+      font-size:17px; border-radius:50%;
+      background:var(--bg-panel); border:1px solid var(--stroke); color:var(--text);
+      backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); box-shadow:0 6px 18px rgba(0,0,0,.35);
+    }
+    body.ui-hidden #topbar,
+    body.ui-hidden #controls,
+    body.ui-hidden #flyers,
+    body.ui-hidden #posePanel{ display:none !important; }
   }
 </style>
 </head>
 <body>
   <div id="scene"></div>
+  <button id="uiToggle" aria-label="Show or hide menus" title="Show / hide menus">✕</button>
 
   <!-- Top overlay -->
   <div id="topbar" class="panel">
@@ -176,6 +192,7 @@
     <div class="sep"></div>
     <button id="particleToggle" class="toggle">Wind&nbsp;○</button>
     <button id="poseToggle" class="toggle">Pose&nbsp;✎</button>
+    <button id="zoneToggle" class="toggle on">Zone&nbsp;▦</button>
   </div>
 
   <!-- Compass -->
@@ -304,6 +321,25 @@
     fields.position.y = -179.5;
     fields.material.transparent = true; fields.material.opacity = 0.25;
     scene.add(fields);
+
+    // --- "Safe / danger" reference plane ---
+    // Vertical, perpendicular to the formation's travel axis (heads point +Z), parked at
+    // the leader's head. Semi-transparent so nothing else is hidden. Position tracked in animate().
+    const zonePlane = new THREE.Mesh(
+      new THREE.PlaneGeometry(16, 13),                 // already in the XY plane => normal is +Z
+      new THREE.MeshBasicMaterial({ color: 0x49d6c4, transparent: true, opacity: 0.14, side: THREE.DoubleSide, depthWrite: false })
+    );
+    zonePlane.renderOrder = 2;
+    zonePlane.add(new THREE.LineSegments(                // crisper edge so the plane is easy to read
+      new THREE.EdgesGeometry(zonePlane.geometry),
+      new THREE.LineBasicMaterial({ color: 0x7df0e2, transparent: true, opacity: 0.55 })
+    ));
+    scene.add(zonePlane);
+    const _tip = new THREE.Vector3();
+    const _zoneNormal = new THREE.Vector3();
+    const _spineQ = new THREE.Quaternion();
+    const _spineE = new THREE.Euler();
+    const _ZPLUS = new THREE.Vector3(0, 0, 1);
 
     // ---------------------------------------------------------------------
     // Controls: real OrbitControls if present, else a compact fallback
@@ -594,6 +630,7 @@
     // Flyer collection + spatial arrangement
     // ---------------------------------------------------------------------
     const flyers = [];
+    let leaderFlyer = null;   // the reference flyer for the safe-zone plane + Add-button cloning
 
     function drawLabel(f, text, colorHex){
       const c = f.labelCanvas, ctx = c.getContext('2d');
@@ -640,7 +677,7 @@
     function addFlyer(opts){
       opts = opts || {};
       if (flyers.length >= 8) return;
-      const leader = flyers[0];
+      const leader = leaderFlyer || flyers[0];
       const clone = opts.type === undefined && !!leader;
       const f = makeFigure(PALETTE[flyers.length % PALETTE.length]);
       if (clone){
@@ -675,6 +712,7 @@
       scene.remove(f.root);
       f.material.dispose();
       flyers.splice(i, 1);
+      if (leaderFlyer === f) leaderFlyer = flyers[0] || null;   // hand leadership to the next flyer
       reflow();
       recolorAll();
       rebuildList();
@@ -770,6 +808,19 @@
       flyers.forEach(f => f.arrow.visible = windVisible);   // arrows track the toggle too
       particleToggle.classList.toggle('on', windVisible);
       particleToggle.innerHTML = windVisible ? 'Wind&nbsp;●' : 'Wind&nbsp;○';
+    });
+
+    const zoneToggle = document.getElementById('zoneToggle');
+    zoneToggle.addEventListener('click', () => {
+      zonePlane.visible = !zonePlane.visible;
+      zoneToggle.classList.toggle('on', zonePlane.visible);
+    });
+
+    // Mobile declutter: hide/show all overlays (button itself stays visible)
+    const uiToggle = document.getElementById('uiToggle');
+    uiToggle.addEventListener('click', () => {
+      const hidden = document.body.classList.toggle('ui-hidden');
+      uiToggle.textContent = hidden ? '☰' : '✕';   // ☰ = tap to show menus, ✕ = tap to hide
     });
 
     const listEl = document.getElementById('flyerList');
@@ -1154,6 +1205,17 @@
         selRing.visible = false;
       }
 
+      // park the safe/danger plane at the TIP (crown) of the leader's head, tilted ⟂ to his chest
+      if (zonePlane.visible && (leaderFlyer || flyers.length)){
+        const lead = leaderFlyer || flyers[0];
+        lead.joints.head.updateWorldMatrix(true, false);
+        zonePlane.position.copy(lead.joints.head.localToWorld(_tip.set(0, 0.5, 0)));  // 0.5 ≈ base-of-skull→crown
+        // chest/spine "forward" (toward head) in world, from the stable attitude (no idle wobble)
+        _spineE.set(lead.jCur.spine.x, lead.jCur.spine.y, lead.jCur.spine.z);
+        _zoneNormal.set(0, 1, 0).applyQuaternion(_spineQ.setFromEuler(_spineE)).applyQuaternion(lead.smoothQuat).normalize();
+        zonePlane.quaternion.setFromUnitVectors(_ZPLUS, _zoneNormal);
+      }
+
       if (particles.visible) updateParticles(dt);
       controls.update();
       drawCompass();
@@ -1171,9 +1233,12 @@
     // ---------------------------------------------------------------------
     onAttitudeChange();   // sync readouts
     // Three default jumpers in a loose formation (Uncle YumYum sits low, out front).
-    addFlyer({ type:'angle', name:'F Ryan',       slot:{ x:-2.8, y: 0.3, z:-0.3 } }); // leader (red, left)
-    addFlyer({ type:'angle', name:'Gipsy',        slot:{ x: 0.6, y: 0.6, z: 0.6 } }); // gold, centre
-    addFlyer({ type:'angle', name:'Uncle YumYum', slot:{ x:-0.5, y:-1.9, z: 0.9 } }); // yellow, bottom
+    // Uncle YumYum leads at the bottom/front; the safe-zone plane sits at the tip of his head.
+    // F Ryan & Gipsy fly forward (same altitude) so their heads also land on that tilted plane.
+    addFlyer({ type:'angle', name:'F Ryan',       slot:{ x:-2.8, y: 0.3, z: 1.93 } }); // red, left
+    addFlyer({ type:'angle', name:'Gipsy',        slot:{ x: 0.6, y: 0.6, z: 2.07 } }); // gold, centre
+    addFlyer({ type:'angle', name:'Uncle YumYum', slot:{ x:-0.5, y:-1.9, z: 0.9  } }); // yellow, leader (low/front)
+    leaderFlyer = flyers[2];   // YumYum is the reference for the safe/danger plane and Add-button cloning
     animate();
   })();
   </script>
