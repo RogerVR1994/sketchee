@@ -1,0 +1,1107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>3D Angle Jump Viewer</title>
+<style>
+  :root{
+    --bg-panel: rgba(14, 20, 32, 0.78);
+    --bg-panel-2: rgba(22, 30, 46, 0.7);
+    --stroke: rgba(120, 160, 210, 0.22);
+    --text: #e8eef7;
+    --text-dim: #9fb2cc;
+    --accent: #3ec8d8;
+    --accent-2: #5b8def;
+    --danger: #ff5a6a;
+  }
+  *{ box-sizing: border-box; }
+  html,body{ margin:0; height:100%; overflow:hidden; background:#0b1424; }
+  body{
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+  }
+  /* Sky gradient sits behind the transparent WebGL canvas */
+  #scene{
+    position:fixed; inset:0;
+    background: linear-gradient(180deg, #0c1830 0%, #214b78 55%, #4a86ba 100%);
+  }
+  canvas{ display:block; }
+
+  .panel{
+    position:fixed;
+    background: var(--bg-panel);
+    border: 1px solid var(--stroke);
+    border-radius: 14px;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+    z-index: 10;
+  }
+  .panel h2{
+    margin:0 0 10px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+
+  /* ---- Top overlay: live readout + particle toggle ---- */
+  #topbar{
+    top:14px; left:50%; transform:translateX(-50%);
+    display:flex; align-items:center; gap:18px;
+    padding:10px 16px;
+  }
+  #topbar .stat{ display:flex; flex-direction:column; align-items:center; min-width:70px; }
+  #topbar .stat .k{ font-size:10px; letter-spacing:.12em; color:var(--text-dim); text-transform:uppercase; }
+  #topbar .stat .v{ font-size:20px; font-weight:700; font-variant-numeric: tabular-nums; }
+  #topbar .sep{ width:1px; height:30px; background:var(--stroke); }
+  #topbar .title{ font-size:13px; font-weight:700; letter-spacing:.04em; color:#cfe0f5; }
+  #topbar .title small{ display:block; font-weight:500; color:var(--text-dim); letter-spacing:.02em; }
+
+  /* ---- Left control panel ---- */
+  #controls{ left:14px; bottom:14px; width:300px; padding:16px; }
+  .field{ margin-bottom:14px; }
+  .field .row{ display:flex; justify-content:space-between; align-items:baseline; margin-bottom:6px; }
+  .field label{ font-size:12px; color:var(--text-dim); font-weight:600; }
+  .field .val{ font-size:13px; font-weight:700; color:var(--accent); font-variant-numeric: tabular-nums; }
+  input[type=range]{
+    -webkit-appearance:none; appearance:none; width:100%; height:5px; border-radius:5px;
+    background: linear-gradient(90deg, var(--accent-2), var(--accent));
+    outline:none; margin:4px 0;
+  }
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none; appearance:none; width:17px; height:17px; border-radius:50%;
+    background:#fff; border:3px solid var(--accent); cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,.4);
+  }
+  input[type=range]::-moz-range-thumb{
+    width:15px; height:15px; border-radius:50%; background:#fff; border:3px solid var(--accent); cursor:pointer;
+  }
+  .presets{ display:grid; grid-template-columns:1fr 1fr; gap:7px; margin-top:4px; }
+  .presets button{ grid-column: span 1; }
+  .presets button.wide{ grid-column: span 2; }
+  button{
+    font-family:inherit; font-size:12px; font-weight:600; color:var(--text);
+    background: var(--bg-panel-2); border:1px solid var(--stroke); border-radius:9px;
+    padding:8px 10px; cursor:pointer; transition: all .15s ease;
+  }
+  button:hover{ border-color: var(--accent); color:#fff; background: rgba(62,200,216,0.14); }
+  button:active{ transform: translateY(1px); }
+  button:disabled{ opacity:.4; cursor:not-allowed; }
+  button.primary{ background: linear-gradient(180deg, rgba(91,141,239,.35), rgba(91,141,239,.15)); border-color: rgba(91,141,239,.6); }
+  button.toggle.on{ background: rgba(62,200,216,0.2); border-color: var(--accent); color:#fff; }
+
+  /* ---- Right flyer panel ---- */
+  #flyers{ right:14px; top:14px; width:266px; padding:16px; max-height: calc(100vh - 28px); display:flex; flex-direction:column; }
+  #flyers .head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+  #flyers .head .count{ font-size:11px; color:var(--text-dim); }
+  #flyerList{ overflow-y:auto; margin:0 -4px; padding:0 4px; }
+  .flyer-row{
+    display:flex; align-items:center; gap:9px; padding:8px; margin-bottom:8px; cursor:pointer;
+    background: var(--bg-panel-2); border:1px solid var(--stroke); border-radius:10px;
+  }
+  .flyer-row.selected{ border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 4px 14px rgba(62,200,216,.18); }
+  .swatch{ width:16px; height:16px; border-radius:5px; flex:0 0 auto; box-shadow: inset 0 0 0 1px rgba(255,255,255,.25); }
+  .flyer-row .name{ font-size:13px; font-weight:700; width:26px; }
+  .flyer-row .meta{ font-size:10px; color:var(--text-dim); margin-left:auto; text-align:right; line-height:1.25; white-space:nowrap; }
+  select{
+    font-family:inherit; font-size:12px; font-weight:600; color:var(--text);
+    background: rgba(10,16,28,.6); border:1px solid var(--stroke); border-radius:8px;
+    padding:5px 6px; cursor:pointer; outline:none;
+  }
+  select:hover{ border-color: var(--accent); }
+  .x-btn{ padding:4px 8px; font-size:13px; line-height:1; border-radius:7px; }
+  .x-btn:hover{ border-color:var(--danger); color:var(--danger); background: rgba(255,90,106,.12); }
+
+  /* ---- Fine Pose window ---- */
+  #posePanel{ left:330px; top:74px; width:288px; padding:0; display:flex; flex-direction:column; max-height:calc(100vh - 110px); z-index:20; }
+  .pp-head{ display:flex; align-items:center; justify-content:space-between; gap:8px; padding:11px 13px; border-bottom:1px solid var(--stroke); cursor:move; user-select:none; }
+  .pp-title{ font-size:13px; font-weight:700; }
+  .pp-title span{ color:var(--accent); }
+  .pp-mirror{ font-size:11px; color:var(--text-dim); display:inline-flex; align-items:center; gap:4px; cursor:pointer; }
+  .pp-mirror input{ accent-color: var(--accent); }
+  .pp-body{ padding:8px 13px; overflow-y:auto; }
+  .pp-empty{ font-size:12px; color:var(--text-dim); padding:16px 4px; text-align:center; line-height:1.5; }
+  .pp-group{ font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--accent); margin:13px 0 5px; font-weight:700; }
+  .pp-group:first-child{ margin-top:3px; }
+  .pp-rowwrap{ margin-bottom:8px; }
+  .pp-row{ display:flex; justify-content:space-between; align-items:baseline; margin-bottom:2px; }
+  .pp-row label{ font-size:12px; color:var(--text-dim); }
+  .pp-val{ font-size:12px; font-weight:700; font-variant-numeric:tabular-nums; }
+  .pp-foot{ padding:10px 13px; border-top:1px solid var(--stroke); }
+  .pp-foot button{ width:100%; }
+
+  /* ---- Compass (stretch) ---- */
+  #compass{ left:14px; top:14px; width:78px; height:78px; padding:0; display:flex; align-items:center; justify-content:center; border-radius:50%; }
+
+  .hint{ position:fixed; left:50%; bottom:14px; transform:translateX(-50%); font-size:11px; color:var(--text-dim);
+    background: var(--bg-panel); border:1px solid var(--stroke); border-radius:20px; padding:6px 14px; z-index:9; }
+  @media (max-width: 760px){
+    #controls{ width: calc(100vw - 28px); }
+    #flyers{ display:none; }
+  }
+</style>
+</head>
+<body>
+  <div id="scene"></div>
+
+  <!-- Top overlay -->
+  <div id="topbar" class="panel">
+    <div class="title">Angle Jump Viewer<small>body positioning &amp; relative wind</small></div>
+    <div class="sep"></div>
+    <div class="stat"><span class="k">Pitch</span><span class="v" id="pitchOut">0°</span></div>
+    <div class="stat"><span class="k">Roll</span><span class="v" id="rollOut">0°</span></div>
+    <div class="sep"></div>
+    <button id="particleToggle" class="toggle on">Wind&nbsp;●</button>
+    <button id="poseToggle" class="toggle">Pose&nbsp;✎</button>
+  </div>
+
+  <!-- Compass -->
+  <div id="compass" class="panel"><canvas id="compassCanvas" width="78" height="78"></canvas></div>
+
+  <!-- Left: pitch/roll + presets -->
+  <div id="controls" class="panel">
+    <h2>Body Attitude · Angle flyers</h2>
+    <div class="field">
+      <div class="row"><label>Pitch <span style="color:var(--text-dim);font-weight:400">(head-down ↔ head-up)</span></label><span class="val" id="pitchVal">0°</span></div>
+      <input id="pitch" type="range" min="-90" max="90" step="1" value="0" />
+    </div>
+    <div class="field">
+      <div class="row"><label>Roll <span style="color:var(--text-dim);font-weight:400">(bank / carve)</span></label><span class="val" id="rollVal">0°</span></div>
+      <input id="roll" type="range" min="-180" max="180" step="1" value="0" />
+    </div>
+    <div class="presets">
+      <button data-pitch="0"   data-roll="0">Neutral</button>
+      <button data-pitch="-45" data-roll="0">Steep Angle 45°</button>
+      <button data-pitch="-90" data-roll="0">Pure Head-Down</button>
+      <button data-pitch="-30" data-roll="-35">Left Carve</button>
+      <button data-pitch="-30" data-roll="35">Right Carve</button>
+    </div>
+  </div>
+
+  <!-- Right: flyer management -->
+  <div id="flyers" class="panel">
+    <div class="head">
+      <h2 style="margin:0">Flyers</h2>
+      <span class="count"><span id="flyerCount">1</span> / 8</span>
+    </div>
+    <div style="display:grid; grid-template-columns:1fr auto; gap:7px; margin-bottom:12px;">
+      <button id="addFlyer" class="primary">+ Add Flyer</button>
+      <button id="resetLayout" title="Re-tidy into the default formation">Reset</button>
+    </div>
+    <div id="flyerList"></div>
+  </div>
+
+  <!-- Fine Pose editor (floating, draggable window) -->
+  <div id="posePanel" class="panel" style="display:none;">
+    <div class="pp-head" id="ppHead">
+      <span class="pp-title">Fine Pose · <span id="ppTarget">—</span></span>
+      <span style="display:flex; align-items:center; gap:8px;">
+        <label class="pp-mirror"><input type="checkbox" id="ppMirror" checked> Mirror&nbsp;L/R</label>
+        <button id="ppClose" class="x-btn">✕</button>
+      </span>
+    </div>
+    <div class="pp-body">
+      <div id="ppEmpty" class="pp-empty">Select a flyer (click it, or a row at right) to edit its body.</div>
+      <div id="ppControls"></div>
+    </div>
+    <div class="pp-foot"><button id="ppReset">Reset to position preset</button></div>
+  </div>
+
+  <div class="hint">Drag a flyer to move it · Shift-drag for altitude · drag empty space to orbit · scroll to zoom · <b>Pose&nbsp;✎</b> fine-tunes the selected flyer</div>
+
+  <!-- Three.js r128 core (as specified) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <!-- OrbitControls matching r128 (cdnjs r128 does not ship controls; this is the version-matched examples build). A built-in fallback below activates if it fails to load. -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+  <script>
+  (function(){
+    "use strict";
+    const d = THREE.MathUtils.degToRad;
+
+    // ---------------------------------------------------------------------
+    // Scene, camera, renderer
+    // ---------------------------------------------------------------------
+    const container = document.getElementById('scene');
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x2b4d74, 0.011);
+
+    const camera = new THREE.PerspectiveCamera(50, window.innerWidth/window.innerHeight, 0.1, 200);
+    camera.position.set(11, 6.5, 15);
+
+    const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    container.appendChild(renderer.domElement);
+
+    // Lighting
+    scene.add(new THREE.HemisphereLight(0xbcd8ff, 0x223247, 0.95));
+    const sun = new THREE.DirectionalLight(0xffffff, 0.85);
+    sun.position.set(6, 14, 8);
+    scene.add(sun);
+    const rim = new THREE.DirectionalLight(0x88bbff, 0.35);
+    rim.position.set(-8, 2, -10);
+    scene.add(rim);
+
+    // Faint ground reference far below the formation (depth cue)
+    const grid = new THREE.GridHelper(80, 32, 0x4a86ba, 0x2a4a6a);
+    grid.material.transparent = true; grid.material.opacity = 0.18;
+    grid.position.y = -16;
+    scene.add(grid);
+
+    // ---------------------------------------------------------------------
+    // Controls: real OrbitControls if present, else a compact fallback
+    // ---------------------------------------------------------------------
+    let controls;
+    if (typeof THREE.OrbitControls === 'function') {
+      controls = new THREE.OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.08;
+      controls.minDistance = 4;
+      controls.maxDistance = 60;
+      controls.target.set(0, 0, 0);
+    } else {
+      controls = new MiniOrbit(camera, renderer.domElement);
+    }
+
+    // Minimal orbit/zoom/pan fallback (only used if OrbitControls CDN fails)
+    function MiniOrbit(cam, dom){
+      this.target = new THREE.Vector3(0,0,0);
+      this.enabled = true;
+      const spherical = new THREE.Spherical().setFromVector3(
+        new THREE.Vector3().copy(cam.position).sub(this.target));
+      const delta = { theta:0, phi:0 };
+      let scale = 1, state = -1;
+      const start = new THREE.Vector2();
+      const pan = new THREE.Vector3();
+      const self = this;
+      function down(e){ if (!self.enabled) return; start.set(e.clientX, e.clientY); state = (e.button===2 || e.shiftKey) ? 1 : 0; }
+      function move(e){
+        if (!self.enabled || state === -1) return;
+        const dx = e.clientX - start.x, dy = e.clientY - start.y;
+        if (state === 0){ delta.theta -= dx*0.005; delta.phi -= dy*0.005; }
+        else {
+          const dist = new THREE.Vector3().copy(cam.position).sub(self.target).length();
+          const k = 2 * dist * Math.tan(d(cam.fov/2)) / dom.clientHeight;
+          const te = cam.matrix.elements;
+          pan.add(new THREE.Vector3(te[0],te[1],te[2]).multiplyScalar(-dx*k));
+          pan.add(new THREE.Vector3(te[4],te[5],te[6]).multiplyScalar( dy*k));
+        }
+        start.set(e.clientX, e.clientY);
+      }
+      function up(){ state = -1; }
+      function wheel(e){ if (!self.enabled) return; e.preventDefault(); scale *= (e.deltaY>0 ? 1.08 : 0.925); }
+      dom.addEventListener('pointerdown', down);
+      dom.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+      dom.addEventListener('wheel', wheel, { passive:false });
+      dom.addEventListener('contextmenu', e => e.preventDefault());
+      this.update = function(){
+        const off = new THREE.Vector3().copy(cam.position).sub(this.target);
+        spherical.setFromVector3(off);
+        spherical.theta += delta.theta;
+        spherical.phi = Math.max(0.05, Math.min(Math.PI-0.05, spherical.phi + delta.phi));
+        spherical.radius = Math.max(4, Math.min(60, spherical.radius * scale));
+        this.target.add(pan);
+        off.setFromSpherical(spherical);
+        cam.position.copy(this.target).add(off);
+        cam.lookAt(this.target);
+        delta.theta *= 0.85; delta.phi *= 0.85; pan.multiplyScalar(0.85);
+        scale = 1 + (scale - 1) * 0.85;
+      };
+    }
+
+    // ---------------------------------------------------------------------
+    // Figure construction
+    //   Reference pose: spine along +Y (head up), belly faces +Z.
+    //   Limbs are two-segment with joint pivots so positions read clearly.
+    // ---------------------------------------------------------------------
+    const PALETTE = ['#ff5a5f','#ffb400','#ffe14d','#7ed957','#3ec1c9','#5b8def','#b06bff','#ff7ad9'];
+
+    // Capsule = cylinder + 2 hemispheres (r128 has no CapsuleGeometry)
+    function makeCapsule(radius, cylLen, material){
+      const g = new THREE.Group();
+      const cyl = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, cylLen, 16), material);
+      g.add(cyl);
+      const sphGeo = new THREE.SphereGeometry(radius, 16, 12);
+      const top = new THREE.Mesh(sphGeo, material); top.position.y =  cylLen/2; g.add(top);
+      const bot = new THREE.Mesh(sphGeo, material); bot.position.y = -cylLen/2; g.add(bot);
+      return g;
+    }
+
+    // A tapered limb segment (thick proximal -> thin distal) hanging along -Y
+    // from the pivot origin, with a ball joint at the pivot for an articulated look.
+    function limbSeg(topR, botR, len, material){
+      const pivot = new THREE.Group();
+      const mesh = new THREE.Mesh(new THREE.CylinderGeometry(topR, botR, len, 14), material);
+      mesh.position.y = -len/2;
+      pivot.add(mesh);
+      const ball = new THREE.Mesh(new THREE.SphereGeometry(topR*1.18, 12, 10), material);
+      pivot.add(ball);
+      return pivot;
+    }
+
+    function makeFigure(colorHex){
+      const material = new THREE.MeshStandardMaterial({ color: colorHex, roughness:0.55, metalness:0.05 });
+
+      const root = new THREE.Group();        // translated only (holds world-up arrow + label)
+      const pose = new THREE.Group();         // rotated to express body attitude
+      root.add(pose);
+
+      const joints = {};
+
+      // --- Lower body: pelvis + legs hang directly from `pose` (move with the hips) ---
+      const pelvis = new THREE.Mesh(new THREE.SphereGeometry(0.23, 18, 14), material);
+      pelvis.position.y = -0.40; pelvis.scale.set(1.35, 0.82, 1.0);
+      pose.add(pelvis);
+
+      function leg(sign){
+        const hip = limbSeg(0.185, 0.14, 0.78, material);        // thigh
+        hip.position.set(0.18*sign, -0.46, 0);
+        const knee = limbSeg(0.135, 0.095, 0.74, material);      // shin (calf)
+        knee.position.y = -0.78;
+        hip.add(knee);
+        const ankle = new THREE.Group();                         // ankle pivot -> posable foot
+        ankle.position.y = -0.74;
+        knee.add(ankle);
+        const foot = new THREE.Mesh(new THREE.BoxGeometry(0.155, 0.10, 0.40), material);
+        foot.position.set(0, -0.05, 0.13);                       // sole below ankle, toes forward (+Z)
+        ankle.add(foot);
+        const heel = new THREE.Mesh(new THREE.SphereGeometry(0.085, 10, 8), material);
+        heel.position.set(0, -0.03, -0.05);
+        ankle.add(heel);
+        pose.add(hip);
+        return { hip, knee, ankle };
+      }
+
+      // --- Spine pivot at the waist: the whole upper body bends/twists from here ---
+      const spine = new THREE.Group();
+      spine.position.y = -0.18;
+      pose.add(spine);
+
+      // Torso: chest (wider) tapering down to the waist, rounded upper chest + belly
+      const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.285, 0.21, 0.66, 20), material);
+      torso.position.y = 0.315;                                  // spine-local: waist(0) -> chest
+      spine.add(torso);
+      const chestTop = new THREE.Mesh(new THREE.SphereGeometry(0.275, 18, 14), material);
+      chestTop.position.y = 0.63; chestTop.scale.set(1.05, 0.72, 0.95);
+      spine.add(chestTop);
+      const belly = new THREE.Mesh(new THREE.SphereGeometry(0.215, 16, 12), material);
+      belly.position.y = 0.07; belly.scale.set(1.05, 0.85, 0.92);
+      spine.add(belly);
+      const shoulders = makeCapsule(0.13, 0.52, material);       // girdle laid across X
+      shoulders.rotation.z = Math.PI / 2; shoulders.position.y = 0.66;
+      spine.add(shoulders);
+
+      // Neck + head (slightly egg-shaped); nose nub keeps facing readable
+      const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.095, 0.12, 0.22, 12), material);
+      neck.position.y = 0.84;
+      spine.add(neck);
+      const headPivot = new THREE.Group();             // head/neck joint: nod / turn / tilt
+      headPivot.position.y = 0.92;                      // base of skull (spine-local)
+      spine.add(headPivot);
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.25, 22, 16), material);
+      head.position.y = 0.21; head.scale.set(0.97, 1.16, 1.0);
+      headPivot.add(head);
+      const nose = new THREE.Mesh(new THREE.SphereGeometry(0.062, 8, 8), material);
+      nose.position.set(0, 0.18, 0.225);
+      headPivot.add(nose);
+
+      function arm(sign){
+        const shoulder = limbSeg(0.12, 0.097, 0.58, material);   // upper arm
+        shoulder.position.set(0.34*sign, 0.66, 0);               // spine-local, at the girdle
+        const elbow = limbSeg(0.097, 0.07, 0.55, material);      // forearm
+        elbow.position.y = -0.58;
+        shoulder.add(elbow);
+        const hand = new THREE.Mesh(new THREE.SphereGeometry(0.095, 12, 10), material);
+        hand.position.y = -0.56; hand.scale.set(1.0, 1.3, 0.5);  // mitten-ish hand
+        elbow.add(hand);
+        spine.add(shoulder);                                     // arms ride the chest/spine
+        return { shoulder, elbow };
+      }
+
+      const la = arm(1), ra = arm(-1), ll = leg(1), rl = leg(-1);
+      joints.spine = spine; joints.head = headPivot;
+      joints.lSh = la.shoulder; joints.lEl = la.elbow;
+      joints.rSh = ra.shoulder; joints.rEl = ra.elbow;
+      joints.lHip = ll.hip; joints.lKnee = ll.knee; joints.lAnkle = ll.ankle;
+      joints.rHip = rl.hip; joints.rKnee = rl.knee; joints.rAnkle = rl.ankle;
+
+      // Floating label (always faces camera)
+      const labelCanvas = document.createElement('canvas');
+      labelCanvas.width = 256; labelCanvas.height = 128;
+      const labelTex = new THREE.CanvasTexture(labelCanvas);
+      const labelMat = new THREE.SpriteMaterial({ map: labelTex, transparent:true, depthTest:false });
+      const label = new THREE.Sprite(labelMat);
+      label.scale.set(1.5, 0.75, 1);
+      label.position.set(0, 2.0, 0);
+      label.renderOrder = 999;
+      root.add(label);
+
+      // Body-relative wind arrow (lives in root, i.e. world-aligned: shows airflow vs. the posed body)
+      const arrow = new THREE.ArrowHelper(new THREE.Vector3(0,1,0), new THREE.Vector3(0,-1.7,0), 3.0, 0xbfe6ff, 0.5, 0.34);
+      arrow.line.material.transparent = true; arrow.line.material.opacity = 0.9;
+      root.add(arrow);
+
+      scene.add(root);
+
+      return {
+        root, pose, joints, material, label, labelCanvas, labelTex, arrow,
+        type: 'angle',
+        custom: false,                       // true once the Fine Pose window overrides the preset
+        slot: new THREE.Vector3(),
+        phase: Math.random() * Math.PI * 2,
+        smoothQuat: new THREE.Quaternion().copy(pose.quaternion),
+        targetQuat: new THREE.Quaternion(),
+        jCur: emptyJointState(),
+        jTar: emptyJointState(),
+        fallRate: 0,
+        _fallEl: null
+      };
+    }
+
+    function emptyJointState(){
+      const s = {};
+      ['spine','head','lSh','rSh','lEl','rEl','lHip','rHip','lKnee','rKnee','lAnkle','rAnkle']
+        .forEach(k => s[k] = {x:0,y:0,z:0});
+      return s;
+    }
+
+    // ---------------------------------------------------------------------
+    // Poses: per-position joint targets + body attitude quaternion
+    // ---------------------------------------------------------------------
+    const POSE_DEFS = {
+      // angles in degrees; z is mirrored for the right side
+      angle: { spine:{x:25,y:0}, head:{x:17,y:0}, sh:{x:31,z:57},  el:{x:-27}, hip:{x:-7,z:9},   knee:{x:26}, ankle:{x:7}  },
+      sit:   { spine:{x:-10,y:0},head:{x:0,y:0},  sh:{x:-35,z:78},  el:{x:-55}, hip:{x:-85,z:16},  knee:{x:95}, ankle:{x:0}  },
+      back:  { spine:{x:0,y:0},  head:{x:10,y:0}, sh:{x:0,z:102},   el:{x:5},   hip:{x:0,z:28},    knee:{x:5},  ankle:{x:-15}}
+    };
+
+    function jointTargets(type){
+      const P = POSE_DEFS[type];
+      return {
+        spine:{x:d(P.spine.x), y:d(P.spine.y||0), z:0},
+        head:{x:d(P.head.x), y:d(P.head.y||0), z:0},
+        lSh:{x:d(P.sh.x), y:0, z:d(P.sh.z)},  rSh:{x:d(P.sh.x), y:0, z:d(-P.sh.z)},
+        lEl:{x:d(P.el.x), y:0, z:0},          rEl:{x:d(P.el.x), y:0, z:0},
+        lHip:{x:d(P.hip.x),y:0, z:d(P.hip.z)},rHip:{x:d(P.hip.x),y:0, z:d(-P.hip.z)},
+        lKnee:{x:d(P.knee.x),y:0,z:0},        rKnee:{x:d(P.knee.x),y:0,z:0},
+        lAnkle:{x:d(P.ankle.x),y:0,z:0},      rAnkle:{x:d(P.ankle.x),y:0,z:0}
+      };
+    }
+
+    const AX_X = new THREE.Vector3(1,0,0);
+    const AX_Z = new THREE.Vector3(0,0,1);
+    function poseQuat(type, pitch, roll){
+      const q = new THREE.Quaternion();
+      if (type === 'angle'){
+        // base prone (head +Z, belly down); pitch tilts head down/up; roll banks for carving
+        const qx = new THREE.Quaternion().setFromAxisAngle(AX_X, d(90 - pitch));
+        const qz = new THREE.Quaternion().setFromAxisAngle(AX_Z, d(roll));
+        q.copy(qz).multiply(qx);
+      } else if (type === 'sit'){
+        q.setFromAxisAngle(AX_X, d(-6));     // upright, slight recline
+      } else { // back
+        q.setFromAxisAngle(AX_X, d(-90));    // belly-up, horizontal
+      }
+      return q;
+    }
+
+    function windDir(type, pitch){
+      if (type === 'angle'){
+        // airflow up, leaned by travel direction so head-down flyers meet it more head-on
+        return new THREE.Vector3(0, 1, -Math.sin(d(pitch)) * 0.55).normalize();
+      }
+      return new THREE.Vector3(0, 1, 0);
+    }
+
+    function computeFallRate(type, pitch){
+      if (type === 'sit') return 120;
+      if (type === 'back') return 108;
+      return Math.round(125 + (Math.abs(pitch)/90) * 55); // 125..180 mph
+    }
+
+    function refreshTargets(f){
+      f.targetQuat.copy(poseQuat(f.type, state.pitch, state.roll));
+      if (!f.custom){                        // custom poses are driven by the Fine Pose window
+        const jt = jointTargets(f.type);
+        for (const k in jt) f.jTar[k] = jt[k];
+      }
+      f.arrow.setDirection(windDir(f.type, state.pitch));
+      f.fallRate = computeFallRate(f.type, state.pitch);
+      if (f._fallEl) f._fallEl.textContent = f.fallRate + ' mph';
+    }
+
+    // ---------------------------------------------------------------------
+    // Flyer collection + spatial arrangement
+    // ---------------------------------------------------------------------
+    const flyers = [];
+
+    function drawLabel(f, text, colorHex){
+      const c = f.labelCanvas, ctx = c.getContext('2d');
+      ctx.clearRect(0,0,c.width,c.height);
+      ctx.font = 'bold 74px -apple-system, Segoe UI, Roboto, sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.lineWidth = 9; ctx.strokeStyle = 'rgba(8,14,24,0.92)';
+      ctx.strokeText(text, c.width/2, c.height/2);
+      ctx.fillStyle = colorHex;
+      ctx.fillText(text, c.width/2, c.height/2);
+      f.labelTex.needsUpdate = true;
+    }
+
+    // Keep labels (F1..Fn) and palette colors aligned to index after add/remove
+    function recolorAll(){
+      flyers.forEach((f, i) => {
+        const hex = PALETTE[i % PALETTE.length];
+        f.material.color.set(hex);
+        f.arrow.setColor(new THREE.Color(0xbfe6ff)); // arrow stays airflow-blue
+        drawLabel(f, 'F' + (i+1), hex);
+      });
+      if (selected){ // keep selection highlight + ring color in sync after recolor
+        selected.material.emissive.copy(selected.material.color).multiplyScalar(0.4);
+        selRing.material.color.copy(selected.material.color);
+      }
+    }
+
+    function reflow(){
+      const n = flyers.length, spacing = 2.7;
+      flyers.forEach((f, i) => {
+        if (f.placed) return;                // leave manually-moved flyers where the user put them
+        const off = i - (n-1)/2;
+        f.slot.set(off * spacing, 0, -Math.abs(off) * 0.5); // shallow wedge
+      });
+    }
+
+    function addFlyer(type, copyLeader = true){
+      if (flyers.length >= 8) return;
+      const leader = flyers[0];            // F1 is the leader; new jumpers clone its exact pose
+      const f = makeFigure(PALETTE[flyers.length % PALETTE.length]);
+      if (copyLeader && leader){
+        f.type = leader.type;
+        f.custom = leader.custom;
+        for (const k in leader.jTar) f.jTar[k] = { x:leader.jTar[k].x, y:leader.jTar[k].y, z:leader.jTar[k].z };
+      } else {
+        f.type = type || 'angle';
+        f.custom = false;
+        const jt = jointTargets(f.type);
+        for (const k in jt) f.jTar[k] = { x:jt[k].x, y:jt[k].y, z:jt[k].z };
+      }
+      f.placed = false;                    // false = part of auto-formation; true = pinned by user
+      f.root.userData.flyer = f;           // let raycasting map a hit mesh back to its flyer
+      flyers.push(f);
+      reflow();
+      f.root.position.copy(f.slot);
+      // initialise jCur to match jTar so the flyer appears in its pose immediately
+      for (const k in f.jTar) f.jCur[k] = { x:f.jTar[k].x, y:f.jTar[k].y, z:f.jTar[k].z };
+      f.smoothQuat.copy(poseQuat(f.type, state.pitch, state.roll));
+      refreshTargets(f);                   // attitude/arrow/fall-rate (leaves copied joints when custom)
+      recolorAll();
+      rebuildList();
+    }
+
+    function removeFlyer(i){
+      if (flyers.length <= 1) return;
+      const f = flyers[i];
+      if (selected === f) setSelected(null);
+      scene.remove(f.root);
+      f.material.dispose();
+      flyers.splice(i, 1);
+      reflow();
+      recolorAll();
+      rebuildList();
+    }
+
+    function setFlyerType(i, type){
+      const f = flyers[i];
+      f.type = type;
+      f.custom = false;                      // switching body position clears manual fine-pose edits
+      refreshTargets(f);
+      if (f === selected) updatePosePanel();  // reflect the new preset in the Fine Pose window
+    }
+
+    // ---------------------------------------------------------------------
+    // Particle system — relative wind streaming upward past the formation
+    // ---------------------------------------------------------------------
+    const P_COUNT = 1700;
+    const P_BOX = { x:13, z:8, yTop:13, yBot:-13 };
+    const pPos = new Float32Array(P_COUNT * 3);
+    const pSpeed = new Float32Array(P_COUNT);
+    for (let i=0;i<P_COUNT;i++){
+      pPos[i*3+0] = (Math.random()*2-1) * P_BOX.x;
+      pPos[i*3+1] = (Math.random()*2-1) * P_BOX.yTop;
+      pPos[i*3+2] = (Math.random()*2-1) * P_BOX.z;
+      pSpeed[i] = 6 + Math.random()*7;            // organically varied speed
+    }
+    const pGeo = new THREE.BufferGeometry();
+    pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+    const pMat = new THREE.PointsMaterial({
+      color: 0xddf2ff, size: 0.12, sizeAttenuation: true,
+      transparent: true, opacity: 0.6, depthWrite: false, blending: THREE.AdditiveBlending
+    });
+    const particles = new THREE.Points(pGeo, pMat);
+    scene.add(particles);
+
+    function updateParticles(dt){
+      const a = pGeo.attributes.position.array;
+      const h = P_BOX.yTop - P_BOX.yBot;
+      for (let i=0;i<P_COUNT;i++){
+        let y = a[i*3+1] + pSpeed[i]*dt;
+        if (y > P_BOX.yTop){
+          y -= h;
+          a[i*3+0] = (Math.random()*2-1) * P_BOX.x;   // respawn across the width
+          a[i*3+2] = (Math.random()*2-1) * P_BOX.z;
+        }
+        a[i*3+1] = y;
+      }
+      pGeo.attributes.position.needsUpdate = true;
+    }
+
+    // ---------------------------------------------------------------------
+    // UI wiring
+    // ---------------------------------------------------------------------
+    const state = { pitch:0, roll:0 };
+    const pitchEl = document.getElementById('pitch');
+    const rollEl  = document.getElementById('roll');
+    const pitchVal = document.getElementById('pitchVal');
+    const rollVal  = document.getElementById('rollVal');
+    const pitchOut = document.getElementById('pitchOut');
+    const rollOut  = document.getElementById('rollOut');
+
+    function onAttitudeChange(){
+      state.pitch = parseInt(pitchEl.value, 10);
+      state.roll  = parseInt(rollEl.value, 10);
+      const ps = state.pitch + '°', rs = state.roll + '°';
+      pitchVal.textContent = ps; pitchOut.textContent = ps;
+      rollVal.textContent = rs;  rollOut.textContent = rs;
+      flyers.forEach(refreshTargets); // only angle flyers actually move
+    }
+    pitchEl.addEventListener('input', onAttitudeChange);
+    rollEl.addEventListener('input', onAttitudeChange);
+
+    document.querySelectorAll('.presets button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        pitchEl.value = btn.dataset.pitch;
+        rollEl.value  = btn.dataset.roll;
+        onAttitudeChange();
+      });
+    });
+
+    document.getElementById('addFlyer').addEventListener('click', () => addFlyer()); // clones the leader (F1)
+
+    document.getElementById('resetLayout').addEventListener('click', () => {
+      flyers.forEach(f => f.placed = false); // un-pin everyone and re-tidy the formation
+      reflow();
+    });
+
+    const particleToggle = document.getElementById('particleToggle');
+    particleToggle.addEventListener('click', () => {
+      particles.visible = !particles.visible;
+      particleToggle.classList.toggle('on', particles.visible);
+      particleToggle.innerHTML = particles.visible ? 'Wind&nbsp;●' : 'Wind&nbsp;○';
+    });
+
+    const listEl = document.getElementById('flyerList');
+    const countEl = document.getElementById('flyerCount');
+    const addBtn = document.getElementById('addFlyer');
+    const TYPES = [['angle','Angle'],['sit','Sit Fly'],['back','Back Fly']];
+
+    function rebuildList(){
+      listEl.innerHTML = '';
+      flyers.forEach((f, i) => {
+        const row = document.createElement('div');
+        row.className = 'flyer-row';
+        if (f === selected) row.classList.add('selected');
+
+        const sw = document.createElement('div');
+        sw.className = 'swatch';
+        sw.style.background = PALETTE[i % PALETTE.length];
+
+        const name = document.createElement('div');
+        name.className = 'name';
+        name.textContent = 'F' + (i+1);
+
+        const sel = document.createElement('select');
+        TYPES.forEach(([val, lbl]) => {
+          const o = document.createElement('option');
+          o.value = val; o.textContent = lbl;
+          if (f.type === val) o.selected = true;
+          sel.appendChild(o);
+        });
+        sel.addEventListener('change', () => setFlyerType(i, sel.value));
+
+        const meta = document.createElement('div');
+        meta.className = 'meta';
+        const fall = document.createElement('div');
+        fall.textContent = f.fallRate + ' mph';
+        f._fallEl = fall;
+        meta.appendChild(fall);
+
+        const x = document.createElement('button');
+        x.className = 'x-btn';
+        x.textContent = '✕';
+        x.title = 'Remove';
+        x.disabled = flyers.length <= 1;
+        x.addEventListener('click', () => removeFlyer(i));
+
+        row.append(sw, name, sel, meta, x);
+        row.addEventListener('click', (e) => {
+          if (e.target.closest('select') || e.target.closest('button')) return;
+          setSelected(f);
+        });
+        listEl.appendChild(row);
+      });
+      countEl.textContent = flyers.length;
+      addBtn.disabled = flyers.length >= 8;
+    }
+
+    // ---------------------------------------------------------------------
+    // Compass (stretch) — shows earth heading as the camera orbits
+    // ---------------------------------------------------------------------
+    const compass = document.getElementById('compassCanvas');
+    const cctx = compass.getContext('2d');
+    function drawCompass(){
+      const w = compass.width, h = compass.height, cx = w/2, cy = h/2, r = 30;
+      // heading: camera azimuth around the target (0 = looking toward -Z / "north")
+      const az = Math.atan2(camera.position.x - controls.target.x, camera.position.z - controls.target.z);
+      cctx.clearRect(0,0,w,h);
+      cctx.save(); cctx.translate(cx, cy); cctx.rotate(az);
+      // ring
+      cctx.beginPath(); cctx.arc(0,0,r,0,Math.PI*2);
+      cctx.strokeStyle = 'rgba(160,190,225,0.35)'; cctx.lineWidth = 1.5; cctx.stroke();
+      const marks = [['N',0,'#ff5a6a'],['E',Math.PI/2,'#9fb2cc'],['S',Math.PI,'#9fb2cc'],['W',-Math.PI/2,'#9fb2cc']];
+      cctx.font = 'bold 12px -apple-system, sans-serif';
+      cctx.textAlign='center'; cctx.textBaseline='middle';
+      marks.forEach(([lbl,ang,col]) => {
+        const x = Math.sin(ang)*(r-9), y = -Math.cos(ang)*(r-9);
+        cctx.fillStyle = col; cctx.fillText(lbl, x, y);
+      });
+      cctx.restore();
+      // fixed view needle (points up = where the camera looks)
+      cctx.beginPath(); cctx.moveTo(cx, cy-r-2); cctx.lineTo(cx-4, cy-r+6); cctx.lineTo(cx+4, cy-r+6); cctx.closePath();
+      cctx.fillStyle = '#3ec8d8'; cctx.fill();
+    }
+
+    // ---------------------------------------------------------------------
+    // Selection + drag-to-move (per-flyer placement)
+    //   Click a flyer to select; drag to slide it on the horizontal plane;
+    //   Shift-drag to change altitude. Dragging pins the flyer (placed=true)
+    //   so reflow() leaves it alone until "Reset".
+    // ---------------------------------------------------------------------
+    let selected = null;
+    let dragging = false;
+    const raycaster = new THREE.Raycaster();
+    const ndc = new THREE.Vector2();
+    const dragPlane = new THREE.Plane();
+    const grab = new THREE.Vector3();
+    const hitPt = new THREE.Vector3();
+    let dragStartClientY = 0, dragStartY = 0;
+
+    const selRing = new THREE.Mesh(
+      new THREE.RingGeometry(0.95, 1.12, 44),
+      new THREE.MeshBasicMaterial({ color:0xffffff, transparent:true, opacity:0.85, side:THREE.DoubleSide, depthWrite:false })
+    );
+    selRing.rotation.x = -Math.PI/2;
+    selRing.visible = false;
+    scene.add(selRing);
+
+    function flyerFromObject(o){
+      while (o){ if (o.userData && o.userData.flyer) return o.userData.flyer; o = o.parent; }
+      return null;
+    }
+
+    function setSelected(f){
+      if (selected && selected.material) selected.material.emissive.setHex(0x000000);
+      selected = f;
+      if (f){
+        f.material.emissive.copy(f.material.color).multiplyScalar(0.4);
+        selRing.material.color.copy(f.material.color);
+      }
+      document.querySelectorAll('.flyer-row').forEach((row, i) => {
+        row.classList.toggle('selected', flyers[i] === selected);
+      });
+      updatePosePanel();   // keep the Fine Pose window pointed at the selection
+    }
+
+    function setNDC(e){
+      const r = renderer.domElement.getBoundingClientRect();
+      ndc.x =  ((e.clientX - r.left) / r.width)  * 2 - 1;
+      ndc.y = -((e.clientY - r.top)  / r.height) * 2 + 1;
+    }
+
+    function onFlyerPointerDown(e){
+      if (e.button !== 0) return;                     // left button only
+      setNDC(e);
+      raycaster.setFromCamera(ndc, camera);
+      const hits = raycaster.intersectObjects(flyers.map(f => f.root), true);
+      const f = hits.length ? flyerFromObject(hits[0].object) : null;
+      if (f){
+        setSelected(f);
+        dragging = true;
+        controls.enabled = false;                     // suspend camera while moving a flyer
+        dragStartClientY = e.clientY;
+        dragStartY = f.slot.y;
+        dragPlane.setFromNormalAndCoplanarPoint(new THREE.Vector3(0,1,0), f.root.position);
+        if (raycaster.ray.intersectPlane(dragPlane, hitPt)) grab.copy(hitPt).sub(f.root.position);
+        else grab.set(0,0,0);
+        e.preventDefault();
+      } else {
+        setSelected(null);                            // empty space: deselect and let the camera orbit
+      }
+    }
+
+    function onFlyerPointerMove(e){
+      if (!dragging || !selected) return;
+      const f = selected;
+      if (e.shiftKey){
+        const camDist = camera.position.distanceTo(controls.target);
+        f.slot.y = dragStartY + (dragStartClientY - e.clientY) * 0.01 * (camDist / 12);
+      } else {
+        setNDC(e);
+        raycaster.setFromCamera(ndc, camera);
+        if (raycaster.ray.intersectPlane(dragPlane, hitPt)){
+          f.slot.x = hitPt.x - grab.x;
+          f.slot.z = hitPt.z - grab.z;
+        }
+      }
+      f.placed = true;
+      f.root.position.x = f.slot.x;                   // 1:1 feedback (y eases with the bob in animate)
+      f.root.position.z = f.slot.z;
+      e.preventDefault();
+    }
+
+    function onFlyerPointerUp(){
+      if (dragging){ dragging = false; controls.enabled = true; }
+    }
+
+    // capture phase so we can disable the camera controls before they react to the same event
+    renderer.domElement.addEventListener('pointerdown', onFlyerPointerDown, true);
+    window.addEventListener('pointermove', onFlyerPointerMove, true);
+    window.addEventListener('pointerup', onFlyerPointerUp, true);
+
+    // ---------------------------------------------------------------------
+    // Fine Pose window — per-joint sliders that drive the selected flyer.
+    //   Each DOF maps to a joint pivot + axis (matching jointTargets()).
+    //   Editing a slider flips the flyer into custom mode (jTar driven here).
+    // ---------------------------------------------------------------------
+    const POSE_GROUPS = [
+      { name:'Chest / Spine', dofs:[
+        { key:'spineBend',  label:'Bend (fwd/back)', joints:['spine'], axis:'x', min:-50, max:50 },
+        { key:'spineTwist', label:'Twist',           joints:['spine'], axis:'y', min:-60, max:60 },
+      ]},
+      { name:'Head', dofs:[
+        { key:'headNod',  label:'Nod (up/down)', joints:['head'], axis:'x', min:-50, max:50 },
+        { key:'headTurn', label:'Turn (L/R)',    joints:['head'], axis:'y', min:-70, max:70 },
+        { key:'headTilt', label:'Tilt',          joints:['head'], axis:'z', min:-40, max:40 },
+      ]},
+      { name:'Shoulders', dofs:[
+        { key:'shRaise', label:'Raise', joints:['lSh','rSh'], axis:'z', min:0,   max:175, mirror:true },
+        { key:'shSwing', label:'Swing (fwd/back)', joints:['lSh','rSh'], axis:'x', min:-90, max:90 },
+      ]},
+      { name:'Elbows', dofs:[
+        { key:'elBend', label:'Bend', joints:['lEl','rEl'], axis:'x', min:-150, max:40 },
+      ]},
+      { name:'Hips', dofs:[
+        { key:'hipLift',   label:'Lift (fwd/back)', joints:['lHip','rHip'], axis:'x', min:-110, max:60 },
+        { key:'hipSpread', label:'Spread', joints:['lHip','rHip'], axis:'z', min:0, max:70, mirror:true },
+      ]},
+      { name:'Knees', dofs:[
+        { key:'kneeBend', label:'Bend', joints:['lKnee','rKnee'], axis:'x', min:0, max:160 },
+      ]},
+      { name:'Ankles', dofs:[
+        { key:'anklePoint', label:'Point (toes)', joints:['lAnkle','rAnkle'], axis:'x', min:-45, max:45 },
+      ]},
+    ];
+
+    const posePanel  = document.getElementById('posePanel');
+    const poseToggle = document.getElementById('poseToggle');
+    const ppControls = document.getElementById('ppControls');
+    const ppEmpty    = document.getElementById('ppEmpty');
+    const ppTarget   = document.getElementById('ppTarget');
+    const ppMirror   = document.getElementById('ppMirror');
+
+    function dofRead(f, dof, side){
+      const jName = (side === 'R' && dof.joints[1]) ? dof.joints[1] : dof.joints[0];
+      let rad = (f.jTar[jName] && f.jTar[jName][dof.axis]) || 0;
+      if (side === 'R' && dof.mirror) rad = -rad;
+      return Math.round(THREE.MathUtils.radToDeg(rad));
+    }
+
+    function dofApply(f, dof, side, deg){
+      const val = d(deg);
+      const set = (name, v) => { if (f.jTar[name]) f.jTar[name][dof.axis] = v; };
+      if (side === 'both'){
+        set(dof.joints[0], val);
+        if (dof.joints[1]) set(dof.joints[1], dof.mirror ? -val : val);
+      } else if (side === 'L'){
+        set(dof.joints[0], val);
+      } else {
+        set(dof.joints[1], dof.mirror ? -val : val);
+      }
+      f.custom = true;
+    }
+
+    function poseSliderRow(f, dof, side, suffix){
+      const wrap = document.createElement('div'); wrap.className = 'pp-rowwrap';
+      const row  = document.createElement('div'); row.className = 'pp-row';
+      const lab  = document.createElement('label'); lab.textContent = dof.label + (suffix || '');
+      const val  = document.createElement('span'); val.className = 'pp-val';
+      const input = document.createElement('input');
+      input.type = 'range'; input.min = dof.min; input.max = dof.max; input.step = 1;
+      const cur = dofRead(f, dof, side === 'both' ? 'L' : side);
+      input.value = cur; val.textContent = cur + '°';
+      input.addEventListener('input', () => {
+        val.textContent = input.value + '°';
+        if (selected) dofApply(selected, dof, side, parseInt(input.value, 10));
+      });
+      row.append(lab, val); wrap.append(row, input);
+      return wrap;
+    }
+
+    function renderPosePanel(){
+      ppControls.innerHTML = '';
+      const f = selected; if (!f) return;
+      const independent = !ppMirror.checked;
+      POSE_GROUPS.forEach(group => {
+        const h = document.createElement('div'); h.className = 'pp-group'; h.textContent = group.name;
+        ppControls.appendChild(h);
+        group.dofs.forEach(dof => {
+          if (independent && dof.joints.length > 1){
+            ppControls.appendChild(poseSliderRow(f, dof, 'L', '  · L'));
+            ppControls.appendChild(poseSliderRow(f, dof, 'R', '  · R'));
+          } else {
+            ppControls.appendChild(poseSliderRow(f, dof, 'both'));
+          }
+        });
+      });
+    }
+
+    function updatePosePanel(){
+      if (posePanel.style.display === 'none') return;
+      if (selected){
+        ppEmpty.style.display = 'none';
+        ppControls.style.display = '';
+        ppTarget.textContent = 'F' + (flyers.indexOf(selected) + 1);
+        renderPosePanel();
+      } else {
+        ppEmpty.style.display = '';
+        ppControls.style.display = 'none';
+        ppControls.innerHTML = '';
+        ppTarget.textContent = '—';
+      }
+    }
+
+    function openPosePanel(){ posePanel.style.display = ''; poseToggle.classList.add('on'); updatePosePanel(); }
+    function closePosePanel(){ posePanel.style.display = 'none'; poseToggle.classList.remove('on'); }
+
+    poseToggle.addEventListener('click', () => {
+      if (posePanel.style.display === 'none') openPosePanel(); else closePosePanel();
+    });
+    document.getElementById('ppClose').addEventListener('click', closePosePanel);
+    ppMirror.addEventListener('change', () => { if (selected && posePanel.style.display !== 'none') renderPosePanel(); });
+    document.getElementById('ppReset').addEventListener('click', () => {
+      if (!selected) return;
+      selected.custom = false;          // back to the body-position preset
+      refreshTargets(selected);
+      renderPosePanel();
+    });
+
+    // drag the window by its header
+    (function(){
+      const head = document.getElementById('ppHead');
+      let ox = 0, oy = 0, on = false;
+      head.addEventListener('pointerdown', (e) => {
+        if (e.target.closest('button') || e.target.closest('input')) return;
+        on = true;
+        const r = posePanel.getBoundingClientRect();
+        ox = e.clientX - r.left; oy = e.clientY - r.top;
+        posePanel.style.right = 'auto';
+        try { head.setPointerCapture(e.pointerId); } catch (_) {}
+      });
+      head.addEventListener('pointermove', (e) => {
+        if (!on) return;
+        posePanel.style.left = Math.max(4, Math.min(window.innerWidth - 60,  e.clientX - ox)) + 'px';
+        posePanel.style.top  = Math.max(4, Math.min(window.innerHeight - 40, e.clientY - oy)) + 'px';
+      });
+      head.addEventListener('pointerup', () => { on = false; });
+    })();
+
+    // ---------------------------------------------------------------------
+    // Animation loop
+    // ---------------------------------------------------------------------
+    const tmpEuler = new THREE.Euler();
+    const idleQuat = new THREE.Quaternion();
+    const clock = new THREE.Clock();
+
+    function lerpJoint(cur, tar, a){
+      cur.x += (tar.x - cur.x) * a;
+      cur.y += (tar.y - cur.y) * a;
+      cur.z += (tar.z - cur.z) * a;
+    }
+
+    function animate(){
+      requestAnimationFrame(animate);
+      const dt = Math.min(clock.getDelta(), 0.05);
+      const t = clock.elapsedTime;
+      const a = 1 - Math.exp(-dt / 0.12); // ~0.3s settle, frame-rate independent
+
+      flyers.forEach(f => {
+        // attitude
+        f.smoothQuat.slerp(f.targetQuat, a);
+        const sway = 0.018;
+        idleQuat.setFromEuler(tmpEuler.set(
+          Math.sin(t*1.3 + f.phase)*sway,
+          Math.sin(t*0.9 + f.phase)*sway*1.4,
+          Math.sin(t*1.1 + f.phase)*sway));
+        f.pose.quaternion.copy(f.smoothQuat).multiply(idleQuat);
+
+        // limbs (with a touch of idle flutter)
+        let ji = 0;
+        for (const k in f.jCur){
+          lerpJoint(f.jCur[k], f.jTar[k], a);
+          const p = f.joints[k];
+          const fl = Math.sin(t*2.0 + f.phase + ji) * 0.012;
+          p.rotation.set(f.jCur[k].x + fl, f.jCur[k].y, f.jCur[k].z);
+          ji++;
+        }
+
+        // glide toward formation slot + gentle vertical bob
+        f.root.position.x += (f.slot.x - f.root.position.x) * a;
+        f.root.position.z += (f.slot.z - f.root.position.z) * a;
+        f.root.position.y = f.slot.y + Math.sin(t*1.2 + f.phase) * 0.06;
+      });
+
+      // selection ring tracks the chosen flyer
+      if (selected){
+        selRing.visible = true;
+        const pulse = 1 + Math.sin(t*4) * 0.04;
+        selRing.position.set(selected.root.position.x, selected.slot.y - 2.35, selected.root.position.z);
+        selRing.scale.set(pulse, pulse, pulse);
+      } else {
+        selRing.visible = false;
+      }
+
+      if (particles.visible) updateParticles(dt);
+      controls.update();
+      drawCompass();
+      renderer.render(scene, camera);
+    }
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // ---------------------------------------------------------------------
+    // Boot
+    // ---------------------------------------------------------------------
+    onAttitudeChange();   // sync readouts
+    addFlyer('angle', false);   // start with a single jumper (the leader); use "+ Add Flyer" for more
+    animate();
+  })();
+  </script>
+</body>
+</html>
