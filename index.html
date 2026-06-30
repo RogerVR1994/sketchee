@@ -107,6 +107,9 @@
   .fr-bot{ display:flex; align-items:center; gap:8px; }
   .swatch{ width:15px; height:15px; border-radius:5px; flex:0 0 auto; box-shadow: inset 0 0 0 1px rgba(255,255,255,.25); }
   .flyer-row .name{ font-size:13px; font-weight:700; flex:1 1 auto; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .flyer-row input.name{ background:transparent; border:1px solid transparent; border-radius:6px; padding:3px 6px; outline:none; color:var(--text); cursor:text; }
+  .flyer-row input.name:hover{ border-color:var(--stroke); }
+  .flyer-row input.name:focus{ border-color:var(--accent); background:rgba(10,16,28,.55); cursor:text; }
   .fr-bot select{ flex:1 1 auto; min-width:0; }
   .flyer-row .meta{ font-size:10px; color:var(--text-dim); margin-left:auto; white-space:nowrap; }
   select{
@@ -199,7 +202,7 @@
     <button id="particleToggle" class="toggle">Wind&nbsp;○</button>
     <button id="poseToggle" class="toggle">Pose&nbsp;✎</button>
     <button id="zoneToggle" class="toggle on">Zone&nbsp;▦</button>
-    <button id="lockToggle" class="toggle">Lock&nbsp;🔒</button>
+    <button id="lockToggle" class="toggle on">Lock&nbsp;🔒</button>
   </div>
 
   <!-- Compass -->
@@ -363,6 +366,17 @@
         f.lockU = _slotD.dot(_planeX);
         f.lockV = _slotD.dot(_planeY);
       });
+    }
+
+    // Park the plane at the crown of the leader's head, tilted perpendicular to his chest.
+    function updateZonePlane(){
+      const lead = leaderFlyer || flyers[0];
+      if (!lead) return;
+      lead.joints.head.updateWorldMatrix(true, false);
+      zonePlane.position.copy(lead.joints.head.localToWorld(_tip.set(0, 0.5, 0)));  // 0.5 ≈ base-of-skull→crown
+      _spineE.set(lead.jCur.spine.x, lead.jCur.spine.y, lead.jCur.spine.z);          // stable attitude (no idle wobble)
+      _zoneNormal.set(0, 1, 0).applyQuaternion(_spineQ.setFromEuler(_spineE)).applyQuaternion(lead.smoothQuat).normalize();
+      zonePlane.quaternion.setFromUnitVectors(_ZPLUS, _zoneNormal);
     }
 
     // ---------------------------------------------------------------------
@@ -1239,27 +1253,16 @@
         selRing.visible = false;
       }
 
-      // Position/orient the safe-zone plane every frame (used by the visual AND the slot-lock):
-      // at the TIP (crown) of the leader's head, tilted perpendicular to his chest.
-      if (leaderFlyer || flyers.length){
-        const lead = leaderFlyer || flyers[0];
-        lead.joints.head.updateWorldMatrix(true, false);
-        zonePlane.position.copy(lead.joints.head.localToWorld(_tip.set(0, 0.5, 0)));  // 0.5 ≈ base-of-skull→crown
-        // chest/spine "forward" (toward head) in world, from the stable attitude (no idle wobble)
-        _spineE.set(lead.jCur.spine.x, lead.jCur.spine.y, lead.jCur.spine.z);
-        _zoneNormal.set(0, 1, 0).applyQuaternion(_spineQ.setFromEuler(_spineE)).applyQuaternion(lead.smoothQuat).normalize();
-        zonePlane.quaternion.setFromUnitVectors(_ZPLUS, _zoneNormal);
-
-        // Slot-lock: keep each other flyer's head pinned to its (u,v) point as the plane tilts
-        if (lockSlot){
-          _planeX.set(1, 0, 0).applyQuaternion(zonePlane.quaternion);
-          _planeY.set(0, 1, 0).applyQuaternion(zonePlane.quaternion);
-          flyers.forEach(f => {
-            if (f === lead) return;
-            f.slot.copy(lead.slot).addScaledVector(_planeX, f.lockU).addScaledVector(_planeY, f.lockV);
-            f.root.position.copy(f.slot);   // snap (plane tilt is already smoothed via smoothQuat)
-          });
-        }
+      // Safe-zone plane (visual + slot-lock anchor), then apply the lock to the other flyers.
+      updateZonePlane();
+      if (lockSlot && leaderFlyer){
+        _planeX.set(1, 0, 0).applyQuaternion(zonePlane.quaternion);
+        _planeY.set(0, 1, 0).applyQuaternion(zonePlane.quaternion);
+        flyers.forEach(f => {
+          if (f === leaderFlyer) return;
+          f.slot.copy(leaderFlyer.slot).addScaledVector(_planeX, f.lockU).addScaledVector(_planeY, f.lockV);
+          f.root.position.copy(f.slot);   // snap (plane tilt is already smoothed via smoothQuat)
+        });
       }
 
       if (particles.visible) updateParticles(dt);
@@ -1285,6 +1288,8 @@
     addFlyer({ type:'angle', name:'Gipsy',        slot:{ x: 0.6, y: 0.6, z: 2.07 } }); // gold, centre
     addFlyer({ type:'angle', name:'Uncle YumYum', slot:{ x:-0.5, y:-1.9, z: 0.9  } }); // yellow, leader (low/front)
     leaderFlyer = flyers[2];   // YumYum is the reference for the safe/danger plane and Add-button cloning
+    updateZonePlane();         // orient the plane, then capture spots — Lock is on by default
+    captureLockSlots();
     animate();
   })();
   </script>
