@@ -154,7 +154,7 @@
     <div class="stat"><span class="k">Pitch</span><span class="v" id="pitchOut">0°</span></div>
     <div class="stat"><span class="k">Roll</span><span class="v" id="rollOut">0°</span></div>
     <div class="sep"></div>
-    <button id="particleToggle" class="toggle on">Wind&nbsp;●</button>
+    <button id="particleToggle" class="toggle">Wind&nbsp;○</button>
     <button id="poseToggle" class="toggle">Pose&nbsp;✎</button>
   </div>
 
@@ -227,9 +227,9 @@
     // ---------------------------------------------------------------------
     const container = document.getElementById('scene');
     const scene = new THREE.Scene();
-    scene.fog = new THREE.FogExp2(0x2b4d74, 0.011);
+    scene.fog = new THREE.FogExp2(0x6f7d4a, 0.0004);   // light earthy haze; preserves earth/sky contrast
 
-    const camera = new THREE.PerspectiveCamera(50, window.innerWidth/window.innerHeight, 0.1, 200);
+    const camera = new THREE.PerspectiveCamera(50, window.innerWidth/window.innerHeight, 0.1, 3000);
     camera.position.set(11, 6.5, 15);
 
     const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true });
@@ -246,11 +246,44 @@
     rim.position.set(-8, 2, -10);
     scene.add(rim);
 
-    // Faint ground reference far below the formation (depth cue)
-    const grid = new THREE.GridHelper(80, 32, 0x4a86ba, 0x2a4a6a);
-    grid.material.transparent = true; grid.material.opacity = 0.18;
-    grid.position.y = -16;
-    scene.add(grid);
+    // --- Sky dome + earth with a CRISP horizon at eye level ---
+    // The dome carries the horizon line itself: clear blue above y=0, earth below,
+    // with a hard colour transition so earth and sky are plainly separated.
+    const skyGeo = new THREE.SphereGeometry(1000, 48, 96);   // many height bands => sharp horizon
+    {
+      const skyTop   = new THREE.Color(0x2472c8);   // blue overhead
+      const skyLow    = new THREE.Color(0x8fc0ec);  // lighter blue just above the horizon
+      const earthHi   = new THREE.Color(0x728049);  // earth just below the horizon
+      const earthLow  = new THREE.Color(0x49542f);  // darker earth toward straight-down
+      const pos = skyGeo.attributes.position, cols = [], c = new THREE.Color();
+      for (let i = 0; i < pos.count; i++){
+        const y = pos.getY(i) / 1000;                // -1 (down) .. 1 (up); 0 = horizon
+        if (y >= 0) c.copy(skyLow).lerp(skyTop,   Math.pow(y, 0.5));
+        else        c.copy(earthHi).lerp(earthLow, Math.pow(-y, 0.5));
+        cols.push(c.r, c.g, c.b);
+      }
+      skyGeo.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
+    }
+    const sky = new THREE.Mesh(skyGeo, new THREE.MeshBasicMaterial({
+      vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false
+    }));
+    sky.renderOrder = -1;
+    scene.add(sky);
+
+    // Lit ground beneath the jumpers; its far edge fades into the dome's earth band
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(6000, 6000),
+      new THREE.MeshStandardMaterial({ color: 0x6b7a46, roughness: 1, metalness: 0 })
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -180;
+    scene.add(ground);
+
+    // Faint field parcels for a touch of earth texture
+    const fields = new THREE.GridHelper(6000, 60, 0x55613a, 0x55613a);
+    fields.position.y = -179.5;
+    fields.material.transparent = true; fields.material.opacity = 0.25;
+    scene.add(fields);
 
     // ---------------------------------------------------------------------
     // Controls: real OrbitControls if present, else a compact fallback
@@ -320,6 +353,7 @@
     //   Limbs are two-segment with joint pivots so positions read clearly.
     // ---------------------------------------------------------------------
     const PALETTE = ['#ff5a5f','#ffb400','#ffe14d','#7ed957','#3ec1c9','#5b8def','#b06bff','#ff7ad9'];
+    let windVisible = false;   // wind (particles + per-figure arrows) starts hidden; the Wind button toggles it
 
     // Capsule = cylinder + 2 hemispheres (r128 has no CapsuleGeometry)
     function makeCapsule(radius, cylLen, material){
@@ -444,6 +478,7 @@
       // Body-relative wind arrow (lives in root, i.e. world-aligned: shows airflow vs. the posed body)
       const arrow = new THREE.ArrowHelper(new THREE.Vector3(0,1,0), new THREE.Vector3(0,-1.7,0), 3.0, 0xbfe6ff, 0.5, 0.34);
       arrow.line.material.transparent = true; arrow.line.material.opacity = 0.9;
+      arrow.visible = windVisible;           // new flyers honour the current Wind toggle state
       root.add(arrow);
 
       scene.add(root);
@@ -642,6 +677,7 @@
       transparent: true, opacity: 0.6, depthWrite: false, blending: THREE.AdditiveBlending
     });
     const particles = new THREE.Points(pGeo, pMat);
+    particles.visible = windVisible;     // off by default
     scene.add(particles);
 
     function updateParticles(dt){
@@ -698,9 +734,11 @@
 
     const particleToggle = document.getElementById('particleToggle');
     particleToggle.addEventListener('click', () => {
-      particles.visible = !particles.visible;
-      particleToggle.classList.toggle('on', particles.visible);
-      particleToggle.innerHTML = particles.visible ? 'Wind&nbsp;●' : 'Wind&nbsp;○';
+      windVisible = !windVisible;
+      particles.visible = windVisible;
+      flyers.forEach(f => f.arrow.visible = windVisible);   // arrows track the toggle too
+      particleToggle.classList.toggle('on', windVisible);
+      particleToggle.innerHTML = windVisible ? 'Wind&nbsp;●' : 'Wind&nbsp;○';
     });
 
     const listEl = document.getElementById('flyerList');
