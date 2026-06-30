@@ -350,7 +350,7 @@
     const _planeX = new THREE.Vector3();
     const _planeY = new THREE.Vector3();
     const _slotD = new THREE.Vector3();
-    let lockSlot = false;   // when on, non-leader flyers stay pinned to their point on the plane
+    let lockSlot = true;    // ON by default: non-leader flyers stay pinned to their point on the plane
 
     // Record each non-leader flyer's fixed 2D spot (u,v) on the current plane
     function captureLockSlots(){
